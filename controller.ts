@@ -391,34 +391,27 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		const mapSettings = deepClone(this.parsedMapSettings.mapSettings);
 		const initialX = this.controller.config.get("gridworld.initial_tile_x");
 		const initialY = this.controller.config.get("gridworld.initial_tile_y");
-		const isInitialTile = x === initialX && y === initialY;
-
-		if (!isInitialTile) {
-			delete mapGenSettings.area_to_generate_at_start;
-			if (Array.isArray(mapGenSettings.starting_points)) {
-				mapGenSettings.starting_points = [];
+		const tileSize = this.controller.config.get("gridworld.tile_size");
+		const offsetX = initialX * tileSize;
+		const offsetY = initialY * tileSize;
+		if (mapGenSettings.area_to_generate_at_start) {
+			const area = mapGenSettings.area_to_generate_at_start;
+			if (area.left_top) {
+				area.left_top.x += offsetX;
+				area.left_top.y += offsetY;
 			}
+			if (area.right_bottom) {
+				area.right_bottom.x += offsetX;
+				area.right_bottom.y += offsetY;
+			}
+		}
+		if (Array.isArray(mapGenSettings.starting_points)) {
+			mapGenSettings.starting_points = mapGenSettings.starting_points.map((point: { x: number; y: number }) => ({
+				x: point.x + offsetX,
+				y: point.y + offsetY,
+			}));
 		} else {
-			const tileSize = this.controller.config.get("gridworld.tile_size");
-			const offsetX = x * tileSize;
-			const offsetY = y * tileSize;
-			if (mapGenSettings.area_to_generate_at_start) {
-				const area = mapGenSettings.area_to_generate_at_start;
-				if (area.left_top) {
-					area.left_top.x += offsetX;
-					area.left_top.y += offsetY;
-				}
-				if (area.right_bottom) {
-					area.right_bottom.x += offsetX;
-					area.right_bottom.y += offsetY;
-				}
-			}
-			if (Array.isArray(mapGenSettings.starting_points)) {
-				mapGenSettings.starting_points = mapGenSettings.starting_points.map((point: { x: number; y: number }) => ({
-					x: point.x + offsetX,
-					y: point.y + offsetY,
-				}));
-			}
+			mapGenSettings.starting_points = [{ x: offsetX, y: offsetY }];
 		}
 
 		const seed = typeof mapGenSettings.seed === "number"
