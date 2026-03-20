@@ -23,6 +23,7 @@ declare module "@clusterio/lib" {
 		"gridworld.initial_tile_y": number;
 		"gridworld.auto_start_instances": boolean;
 		"gridworld.save_name_prefix": string;
+		"gridworld.ticks_per_day": number;
 	}
 	export interface InstanceConfigFields {
 		"gridworld.tile_x": number;
@@ -81,6 +82,12 @@ export const plugin: lib.PluginDeclaration = {
 			type: "string",
 			initialValue: "gridworld",
 		},
+		"gridworld.ticks_per_day": {
+			title: "Ticks Per Day",
+			description: "Length of a full day/night cycle in game ticks. Factorio default is 25000 (~7 min at 60 UPS). Use higher values for longer days.",
+			type: "number",
+			initialValue: 25000,
+		},
 	},
 
 	instanceEntrypoint: "./dist/node/instance",
@@ -116,6 +123,21 @@ export const plugin: lib.PluginDeclaration = {
 		messages.GridworldStateRequest,
 		messages.GridworldCreateRequest,
 		messages.GridworldDeleteRequest,
+		messages.GridworldSyncTileAreas,
+		messages.GridworldSyncRailEntities,
+		messages.GridworldApplyRailEntities,
+		messages.GridworldRequestTrainPath,
+		messages.GridworldForwardTrainPath,
+		messages.GridworldReturnTrainPathResult,
+		messages.GridworldReturnTrainPath,
+		messages.GridworldSyncUeStops,
+		messages.GridworldApplyUeStops,
+		messages.GridworldSyncDaytime,
+		messages.GridworldCreateTrainProxy,
+		messages.GridworldClearTrainPath,
+		messages.GridworldForwardClearTrainPath,
+		messages.GridworldRemoveTrainProxy,
+		messages.GridworldForwardRemoveTrainProxy,
 	],
 
 	webEntrypoint: "./web",
