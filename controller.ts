@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import * as lib from "@clusterio/lib";
-import { BaseControllerPlugin, type InstanceInfo } from "@clusterio/controller";
+import { BaseControllerPlugin, type InstanceRecord } from "@clusterio/controller";
 import * as messages from "./messages";
 
 type TileRecord = {
@@ -29,6 +29,7 @@ type EdgeTargetSpec = {
 
 type UniversalEdgesController = {
 	edgeDatastore?: Map<string, any>;
+	storageDirty?: boolean;
 	handleSetEdgeConfigRequest?: (request: { edge: any }) => Promise<void> | void;
 };
 
@@ -177,6 +178,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		this.controller.handle(messages.GridworldReturnTrainPathResult, this.handleGridworldReturnTrainPathResult.bind(this));
 		this.controller.handle(messages.GridworldClearTrainPath, this.handleGridworldClearTrainPath.bind(this));
 		this.controller.handle(messages.GridworldRemoveTrainProxy, this.handleGridworldRemoveTrainProxy.bind(this));
+		this.controller.handle(messages.GridworldCornerTeleportPlayer, this.handleCornerTeleportPlayer.bind(this));
 		this.controller.subscriptions.handle(messages.GridworldStateUpdate, this.handleGridworldStateSubscription.bind(this));
 
 		this.tiles = await loadTiles(this.controller.config, this.logger);
@@ -200,9 +202,8 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		}
 	}
 
-	async onInstanceStatusChanged(instance: InstanceInfo, prev?: lib.InstanceStatus) {
+	async onInstanceStatusChanged(instance: InstanceRecord, prev?: lib.InstanceStatus) {
 		if (instance.status === "running" && prev !== "running") {
-			// Skip pathworld — it doesn't need daytime sync
 			if (instance.config.get("instance.name") === "pathworld") {
 				return;
 			}
@@ -212,6 +213,11 @@ export class ControllerPlugin extends BaseControllerPlugin {
 				this.logger.warn(
 					`Failed sending startup daytime to instance ${instance.id}: ${err?.message ?? err}`,
 				);
+			}
+			// Send corner neighbor info for diagonal entity transport
+			const tile = this.tilesByInstance.get(instance.id);
+			if (tile) {
+				await this.sendCornerNeighbors(tile);
 			}
 		}
 	}
@@ -227,7 +233,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		}
 	}
 
-	async onPlayerEvent(instance: InstanceInfo, event: lib.PlayerEvent) {
+	async onPlayerEvent(instance: InstanceRecord, event: lib.PlayerEvent) {
 		if (event.type !== "join") {
 			return;
 		}
@@ -387,7 +393,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		instanceConfig.set("instance.auto_start", false, "controller");
 		this.setInstanceConfigForTile(instanceConfig, x, y);
 
-		await this.controller.instanceCreate(instanceConfig);
+		await this.controller.instances.createInstance(instanceConfig);
 		const instanceId = instanceConfig.get("instance.id");
 		const tile: TileRecord = {
 			x,
@@ -419,6 +425,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		this.tilesByInstance.set(instanceId, tile);
 		this.storageDirty = true;
 		this.markStateDirty();
+		await this.updateCornerNeighborsForNewTile(tile);
 		this.logger.info(`Created tile ${x},${y} for instance ${instanceId} (${reason})`);
 		return tile;
 	}
@@ -441,7 +448,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 			return false;
 		}
 		try {
-			await this.controller.instanceAssign(tile.instanceId, resolvedHostId);
+			await this.controller.instances.assignInstance(tile.instanceId, resolvedHostId);
 			return true;
 		} catch (err: any) {
 			this.logger.error(`Failed to assign instance ${tile.instanceId}: ${err?.message ?? err}`);
@@ -512,6 +519,68 @@ export class ControllerPlugin extends BaseControllerPlugin {
 				await this.ensureEdgeBetween(tile, neighbor);
 			}
 		}
+	}
+
+	private computeCornerNeighbors(tile: TileRecord): { ne?: number; se?: number; sw?: number; nw?: number } {
+		const ne = this.tiles.get(tileKey(tile.x + 1, tile.y - 1));
+		const se = this.tiles.get(tileKey(tile.x + 1, tile.y + 1));
+		const sw = this.tiles.get(tileKey(tile.x - 1, tile.y + 1));
+		const nw = this.tiles.get(tileKey(tile.x - 1, tile.y - 1));
+		return {
+			ne: ne?.instanceId,
+			se: se?.instanceId,
+			sw: sw?.instanceId,
+			nw: nw?.instanceId,
+		};
+	}
+
+	private async sendCornerNeighbors(tile: TileRecord) {
+		const neighbors = this.computeCornerNeighbors(tile);
+		const instance = this.controller.instances.get(tile.instanceId);
+		if (!instance || instance.status !== "running") {
+			return;
+		}
+		try {
+			await this.controller.sendTo({ instanceId: tile.instanceId }, new messages.GridworldCornerNeighbors(neighbors));
+		} catch (err: any) {
+			this.logger.warn(`Failed to send corner neighbors to tile ${tile.x},${tile.y}: ${err?.message ?? err}`);
+		}
+	}
+
+	private async updateCornerNeighborsForNewTile(tile: TileRecord) {
+		await this.sendCornerNeighbors(tile);
+		const DIAGONAL_DELTAS = [
+			{ dx: -1, dy: -1 }, { dx: 1, dy: -1 },
+			{ dx: -1, dy: 1 }, { dx: 1, dy: 1 },
+		];
+		for (const delta of DIAGONAL_DELTAS) {
+			const diag = this.tiles.get(tileKey(tile.x + delta.dx, tile.y + delta.dy));
+			if (diag) {
+				await this.sendCornerNeighbors(diag);
+			}
+		}
+	}
+
+	async handleCornerTeleportPlayer({ playerName, instanceId }: messages.GridworldCornerTeleportPlayer) {
+		const instance = this.controller.instances.get(instanceId);
+		if (!instance) {
+			throw new lib.ResponseError(`Instance ${instanceId} not found for corner teleport`);
+		}
+		const hostId = instance.config.get("instance.assigned_host");
+		if (!hostId) {
+			throw new lib.ResponseError(`Instance ${instanceId} has no assigned host`);
+		}
+		const host = this.controller.hosts.get(hostId);
+		if (!host) {
+			throw new lib.ResponseError(`Host ${hostId} not found for instance ${instanceId}`);
+		}
+		if (!host.publicAddress) {
+			throw new lib.ResponseError(`Host ${hostId} has no public address configured`);
+		}
+		const address = `${host.publicAddress}:${instance.gamePort || instance.config.get("factorio.game_port")}`;
+		const name = instance.config.get("instance.name") as string;
+		this.logger.info(`Corner teleporting ${playerName} to ${address} (instance ${instanceId})`);
+		return { address, name };
 	}
 
 	private async ensureEdgeBetween(tile: TileRecord, neighbor: TileRecord) {
@@ -698,7 +767,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 			instanceConfig.set("instance.name", instanceName, "controller");
 			instanceConfig.set("instance.auto_start", false, "controller");
 			this.setInstanceConfigForTile(instanceConfig, tile.x, tile.y);
-			await this.controller.instanceCreate(instanceConfig);
+			await this.controller.instances.createInstance(instanceConfig);
 			const newInstanceId = instanceConfig.get("instance.id");
 			this.tilesByInstance.delete(tile.instanceId);
 			tile.instanceId = newInstanceId;
@@ -814,7 +883,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 
 		await this.stopInstanceBeforeDelete(tile.instanceId, `aborted tile ${tile.x},${tile.y}`);
 		try {
-			await this.controller.instanceDelete(tile.instanceId);
+			await this.controller.instances.deleteInstance(tile.instanceId);
 		} catch (err: any) {
 			this.logger.error(
 				`Failed deleting aborted tile instance ${tile.instanceId} (${tile.x},${tile.y}): ${err?.message ?? err}`,
@@ -843,7 +912,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		const escapedSurface = lib.escapeString(surface);
 		const x = tile.x * tileSize;
 		const y = tile.y * tileSize;
-		const command = `/c local force=game.forces.player; local surface=game.surfaces["${escapedSurface}"]; if force and surface then force.set_spawn_position({x=${x}, y=${y}}, surface) end`;
+		const command = `/sc local force=game.forces.player; local surface=game.surfaces["${escapedSurface}"]; if force and surface then force.set_spawn_position({x=${x}, y=${y}}, surface) end`;
 		await this.controller.sendTo(
 			{ instanceId: tile.instanceId },
 			new lib.InstanceSendRconRequest(command),
@@ -1046,13 +1115,6 @@ export class ControllerPlugin extends BaseControllerPlugin {
 			// tile's first synced parking rail at that offset.
 			const [worldX, worldY] = edgePosToWorld([edgeX + 2, -1], side.origin as [number, number], side.direction);
 
-			this.logger.info(
-				`[gridworld] ue_stop reposition: ${stop.stopName} tile=${tileX},${tileY}`
-				+ ` edge=${edgeId} offset=${offset} edgeX=${edgeX}`
-				+ ` origin=[${side.origin}] dir=${side.direction}`
-				+ ` old=(${stop.x},${stop.y}) new=(${worldX},${worldY})`,
-			);
-
 			return {
 				...stop,
 				x: worldX,
@@ -1199,6 +1261,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 			const edgeId = stopName.split(" ")[0];
 			const edge = ue.edgeDatastore.get(edgeId);
 			if (!edge) {
+				this.logger.warn(`[gridworld] create_train_proxy path walk: edge ${edgeId} not in datastore, skipping`);
 				continue;
 			}
 			currentInstanceId = (edge.source.instanceId === currentInstanceId)
@@ -1206,6 +1269,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 				: edge.source.instanceId;
 		}
 		const destinationInstanceId = currentInstanceId;
+		// this.logger.info(`[gridworld] create_train_proxy path walk: sourceInstance=${event.sourceInstanceId} hops=${event.path.length} destinationInstance=${destinationInstanceId}`);
 
 		// Parse edge ID and offset from the last path entry
 		const lastStop = event.path[event.path.length - 1];
@@ -1256,7 +1320,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		for (const tile of tiles) {
 			await this.stopInstanceBeforeDelete(tile.instanceId, `gridworld tile ${tile.x},${tile.y}`);
 			try {
-				await this.controller.instanceDelete(tile.instanceId);
+				await this.controller.instances.deleteInstance(tile.instanceId);
 				deletedInstanceIds.add(tile.instanceId);
 			} catch (err: any) {
 				this.logger.error(
@@ -1276,7 +1340,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 			}
 			await this.stopInstanceBeforeDelete(instance.id, name);
 			try {
-				await this.controller.instanceDelete(instance.id);
+				await this.controller.instances.deleteInstance(instance.id);
 			} catch (err: any) {
 				this.logger.error(
 					`Failed deleting instance ${instance.id} (${name}): ${err?.message ?? err}`,
@@ -1365,15 +1429,15 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		instanceConfig.set("instance.auto_start", true, "controller");
 		// instanceConfig.set("factorio.settings", { public: false, lan: false }, "controller");
 
-		await this.controller.instanceCreate(instanceConfig);
+		await this.controller.instances.createInstance(instanceConfig);
 		const instanceId = instanceConfig.get("instance.id");
 
 		try {
-			await this.controller.instanceAssign(instanceId, hostId);
+			await this.controller.instances.assignInstance(instanceId, hostId);
 		} catch (err: any) {
 			this.logger.error(`Failed to assign pathworld instance ${instanceId}: ${err?.message ?? err}`);
 			try {
-				await this.controller.instanceDelete(instanceId);
+				await this.controller.instances.deleteInstance(instanceId);
 			} catch { /* ignore */ }
 			return;
 		}
@@ -1499,7 +1563,7 @@ export class ControllerPlugin extends BaseControllerPlugin {
 
 	private async removeEdgesForTiles(tiles: TileRecord[]) {
 		const ue = this.getUniversalEdgesController();
-		if (!ue?.handleSetEdgeConfigRequest || !ue.edgeDatastore) {
+		if (!ue?.edgeDatastore) {
 			return;
 		}
 
@@ -1515,17 +1579,10 @@ export class ControllerPlugin extends BaseControllerPlugin {
 		}
 
 		for (const edgeId of edgeIds) {
-			const edge = ue.edgeDatastore.get(edgeId);
-			if (!edge || edge.isDeleted) {
-				continue;
+			if (ue.edgeDatastore.has(edgeId)) {
+				ue.edgeDatastore.delete(edgeId);
+				ue.storageDirty = true;
 			}
-			await ue.handleSetEdgeConfigRequest({
-				edge: {
-					...edge,
-					isDeleted: true,
-					updatedAtMs: Date.now(),
-				},
-			});
 		}
 	}
 }

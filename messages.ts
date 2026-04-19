@@ -497,3 +497,102 @@ export class GridworldApplyUeStops {
 		return new this(json.tileX, json.tileY, json.stops);
 	}
 }
+
+// Controller → Instance: update corner neighbor instance IDs for diagonal transport.
+export class GridworldCornerNeighbors {
+	declare ["constructor"]: typeof GridworldCornerNeighbors;
+	static type = "event" as const;
+	static src = "controller" as const;
+	static dst = "instance" as const;
+	static plugin = "gridworld" as const;
+
+	constructor(public neighbors: {
+		ne?: number;
+		se?: number;
+		sw?: number;
+		nw?: number;
+	}) { }
+
+	static jsonSchema = Type.Object({
+		neighbors: Type.Object({
+			ne: Type.Optional(Type.Number()),
+			se: Type.Optional(Type.Number()),
+			sw: Type.Optional(Type.Number()),
+			nw: Type.Optional(Type.Number()),
+		}),
+	});
+
+	static fromJSON(json: Static<typeof this.jsonSchema>) {
+		return new this(json.neighbors);
+	}
+}
+
+// Instance → Controller: resolve server address for diagonal corner teleport.
+export class GridworldCornerTeleportPlayer {
+	declare ["constructor"]: typeof GridworldCornerTeleportPlayer;
+	static type = "request" as const;
+	static src = "instance" as const;
+	static dst = "controller" as const;
+	static plugin = "gridworld" as const;
+
+	constructor(public playerName: string, public instanceId: number) { }
+
+	static jsonSchema = Type.Object({
+		playerName: Type.String(),
+		instanceId: Type.Number(),
+	});
+
+	static fromJSON(json: Static<typeof this.jsonSchema>) {
+		return new this(json.playerName, json.instanceId);
+	}
+
+	static Response = plainJson(Type.Object({
+		address: Type.String(),
+		name: Type.String(),
+	}));
+}
+
+// Instance → Instance: transfer entities diagonally to a corner neighbor.
+export class GridworldDiagonalEntityTransfer {
+	declare ["constructor"]: typeof GridworldDiagonalEntityTransfer;
+	static type = "request" as const;
+	static src = "instance" as const;
+	static dst = "instance" as const;
+	static plugin = "gridworld" as const;
+
+	constructor(
+		public entityTransfers: Array<{
+			type: "player" | "vehicle";
+			world_position: [number, number];
+			player_name?: string;
+			serialized_entity?: Record<string, unknown>;
+			driver_name?: string;
+			passenger_name?: string;
+		}>,
+	) { }
+
+	static jsonSchema = Type.Object({
+		entityTransfers: Type.Array(Type.Union([
+			Type.Object({
+				type: Type.Literal("player"),
+				player_name: Type.String(),
+				world_position: Type.Tuple([Type.Number(), Type.Number()]),
+			}),
+			Type.Object({
+				type: Type.Literal("vehicle"),
+				serialized_entity: Type.Object({}),
+				world_position: Type.Tuple([Type.Number(), Type.Number()]),
+				driver_name: Type.Optional(Type.String()),
+				passenger_name: Type.Optional(Type.String()),
+			}),
+		])),
+	});
+
+	static fromJSON(json: Static<typeof this.jsonSchema>) {
+		return new this(json.entityTransfers);
+	}
+
+	static Response = plainJson(Type.Object({
+		success: Type.Boolean(),
+	}));
+}

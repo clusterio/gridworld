@@ -65,12 +65,12 @@ function rail_sync_manager.collect_and_send_rail_entities()
 		end
 	end
 
-	clusterio_api.send_json("gridworld:rail_entities", {
-		tile_x    = config.tile_x,
-		tile_y    = config.tile_y,
-		tile_size = config.tile_size,
-		entities  = results,
-	})
+	table.sort(results, function(a, b)
+		if a.x ~= b.x then return a.x < b.x end
+		return a.y < b.y
+	end)
+	local payload = { tile_x = config.tile_x, tile_y = config.tile_y, tile_size = config.tile_size, entities = results }
+	clusterio_api.send_json("gridworld:rail_entities", payload)
 end
 
 -- Collect all ue_source_trainstop entities on every surface and send them via IPC.
@@ -79,6 +79,7 @@ end
 function rail_sync_manager.collect_and_send_ue_stops()
 	local config = storage.gridworld
 	if config == nil or config.is_pathworld then return end
+	if config.tile_x == nil or config.tile_y == nil then return end
 
 	local results = {}
 	for _, surface in pairs(game.surfaces) do
@@ -96,11 +97,15 @@ function rail_sync_manager.collect_and_send_ue_stops()
 		end
 	end
 
-	clusterio_api.send_json("gridworld:ue_stops", {
-		tile_x = config.tile_x,
-		tile_y = config.tile_y,
-		stops  = results,
-	})
+	table.sort(results, function(a, b)
+		return (a.stopName or "") < (b.stopName or "")
+	end)
+	local payload = { tile_x = config.tile_x, tile_y = config.tile_y, stops = results }
+	local serialized = helpers.table_to_json(payload)
+	if storage.gridworld_last_ue_stops_json ~= serialized then
+		storage.gridworld_last_ue_stops_json = serialized
+		clusterio_api.send_json("gridworld:ue_stops", payload)
+	end
 end
 
 -- Apply a set of rail entities sent from a tile instance onto this pathworld surface.

@@ -44,7 +44,7 @@ export const plugin: lib.PluginDeclaration = {
 			title: "Map Exchange String",
 			description: "Map exchange string used to generate tiles.",
 			type: "string",
-			initialValue: ">>>eNpjYmBg8GRgZGDgYUnOT8wB8uwZGA44gDBXcn5BQWqRbn5RKrIwZ3JRaUqqbn4mquLUvNTcSt2kxGKg4gaocIM9R2ZRfh66CTx5iaVlmcXxyTmZaWkQ1RDMWpSfnF2MLCJWXJJYVJKZlx6fWJSaGJ+bn1lcUlqUiqKpuCQ/D8V81pKi1FQUY7hLixLzMktzIS5psIOrLE8sSS1CVsnAqBBSYtHQIscAwv/rGRT+/wdhIOsB0A4QZmBsgKhmBArCACvUMwwKjkDshDCOkbFaZJ37w6op9owQlXoOUMYHqMiBJJiIJ4zh54BTSgXGMEEyxxgMPiMxIJaWAK2AquJwQDAgki0gSUbG3rdbF3w/dsGO8c/Kj5d8kxLsGQ1dRd59MFpnB5RmB3mXCU7MmgkCO2FeYYCZ+cAeKnXTnvHsGRB4Y8/ICtIhAiIcLIDEAW9mBkYBPiBrQQ+QUJBhgDnNDmaMiANjGhh8g/nkMYxx2R7dH8CAsAEZLgciToAIsIVwlzFCmA79DowO8jBZSYQSoH4jBmQ3pCB8eBJm7WEk+9EcghkRyP5AE1FxwBINXCALU+DEC2a4a4DheYEdxnOY78DIDGKAVH0BikF4IBmYURBawAEc3MzwRPnBHjWlgRggQwplrp4BAHC3vz8=<<<",
+			initialValue: ">>>eNpjYmBg8AFiBh6W5PzEHAaGBnsY5krOLyhILdLNL0pFFuZMLipNSdXNz0RVnJqXmlupm5RYjKKYI7MoPw/dBJ68xNKyzOL45JzMtDRkCdai/OTsYmQRseKSxKKSzLz0+MSi1MT43PzM4pJSVNNYi0vy81BFSopSU1GM4S4tSszLLM1FdwlreWJJahGyCANj2XeTFw0tcgwg/L+eQeH/fxAGsh4AQwmEGRgbIKoZgYIwwAr1DIOCIxA7IYxjZKwWWef+sGqKPSNEpZ4DlPEBKnIgCSbiCWP4OeCUUoExTJDMMQaDz0gMiKUlQCugqjgcEAyIZAtIkpGx9+3WBd+PXbBj/LPy4yXfpAR7RkNXkXcfjNbZASXZQd5lghOzZoLATphXGGBmPrCHSt20Zzx7BgTe2DOygnSIgAgHCyBxwJuZgVGAD8ha0AMkFGQYYE6zgxkj4sCYBgbfYD55DGNctkf3BzAgbECGy4GIEyACbCHcZYwQpkO/A6ODPExWEqEEqN+IAdkNKQgfnoRZexjJfjSHYEYEsj/QRFQcsEQDF8jCFDjxghnuGmB4XmCH8RzmOzAygxggVV+AYhAeSAZmFIQWcAAHNzM8UX6wR01pIAbIkCB3zfkAC3S/Eg==<<<",
 		},
 		"gridworld.tile_size": {
 			title: "Tile Size",
@@ -138,6 +138,9 @@ export const plugin: lib.PluginDeclaration = {
 		messages.GridworldForwardClearTrainPath,
 		messages.GridworldRemoveTrainProxy,
 		messages.GridworldForwardRemoveTrainProxy,
+		messages.GridworldCornerNeighbors,
+		messages.GridworldCornerTeleportPlayer,
+		messages.GridworldDiagonalEntityTransfer,
 	],
 
 	webEntrypoint: "./web",

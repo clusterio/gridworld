@@ -2,6 +2,15 @@ import * as lib from "@clusterio/lib";
 import { BaseInstancePlugin } from "@clusterio/host";
 import * as messages from "./messages";
 
+declare module "@clusterio/lib" {
+	export interface InstanceConfigFields {
+		"gridworld.tile_x": number;
+		"gridworld.tile_y": number;
+		"gridworld.tile_size": number;
+		"gridworld.surface_name": string;
+	}
+}
+
 type RailEntitiesIPC = {
 	tile_x: number;
 	tile_y: number;
@@ -29,8 +38,29 @@ type RequestTrainPathIPC = {
 	destination: string;
 };
 
+type CornerNeighbors = { ne?: number; se?: number; sw?: number; nw?: number };
+
+type CornerTeleportPlayerIPC = {
+	player_name: string;
+	corner: "ne" | "se" | "sw" | "nw";
+	world_position: [number, number];
+};
+
+type CornerEntityTransferIPC = {
+	corner: "ne" | "se" | "sw" | "nw";
+	entity_transfers: Array<{
+		type: "player" | "vehicle";
+		world_position: [number, number];
+		player_name?: string;
+		serialized_entity?: Record<string, unknown>;
+		driver_name?: string;
+		passenger_name?: string;
+	}>;
+};
+
 export class InstancePlugin extends BaseInstancePlugin {
 	private warnedMissingConfig = false;
+	private cornerNeighbors: CornerNeighbors = {};
 
 	async init() {
 		this.instance.handle(messages.GridworldSyncTileAreas, this.handleGridworldSyncTileAreas.bind(this));
@@ -80,6 +110,21 @@ export class InstancePlugin extends BaseInstancePlugin {
 		(this.instance.server as any).on("ipc-gridworld:remove_train_proxy", (data: { last_edge_stop: string; destination: string }) => {
 			this.instance.sendTo("controller", new messages.GridworldRemoveTrainProxy(data.last_edge_stop, data.destination));
 		});
+
+		// Corner diagonal transport IPC handlers
+		(this.instance.server as any).on("ipc-gridworld:corner_teleport_player", (data: CornerTeleportPlayerIPC) => {
+			this.handleCornerTeleportPlayerIpc(data).catch(err => this.logger.error(
+				`Error handling corner_teleport_player IPC:\n${err.stack}`,
+			));
+		});
+		(this.instance.server as any).on("ipc-gridworld:corner_entity_transfer", (data: CornerEntityTransferIPC) => {
+			this.handleCornerEntityTransferIpc(data).catch(err => this.logger.error(
+				`Error handling corner_entity_transfer IPC:\n${err.stack}`,
+			));
+		});
+
+		this.instance.handle(messages.GridworldCornerNeighbors, this.handleCornerNeighbors.bind(this));
+		this.instance.handle(messages.GridworldDiagonalEntityTransfer, this.handleDiagonalEntityTransfer.bind(this));
 	}
 
 	async handleForwardRemoveTrainProxy(event: messages.GridworldForwardRemoveTrainProxy) {
@@ -267,5 +312,51 @@ export class InstancePlugin extends BaseInstancePlugin {
 			sourceInstanceId: event.sourceInstanceId,
 		}));
 		await this.sendRcon(`/sc train_path_manager.find_train_path('${json}')`);
+	}
+
+	// --- Corner diagonal transport ---
+
+	async handleCornerNeighbors(event: messages.GridworldCornerNeighbors) {
+		this.cornerNeighbors = event.neighbors;
+		const json = lib.escapeString(JSON.stringify(event.neighbors));
+		await this.sendRcon(`/sc gridworld.set_corner_neighbors('${json}')`);
+	}
+
+	private async handleCornerTeleportPlayerIpc(data: CornerTeleportPlayerIPC) {
+		const targetInstanceId = this.cornerNeighbors[data.corner];
+		if (!targetInstanceId) {
+			this.logger.warn(`No diagonal neighbor for corner ${data.corner}`);
+			return;
+		}
+		const { address, name } = await this.instance.sendTo(
+			"controller",
+			new messages.GridworldCornerTeleportPlayer(data.player_name, targetInstanceId),
+		);
+		const escapedPlayerName = lib.escapeString(data.player_name);
+		const escapedAddress = lib.escapeString(address);
+		const escapedServerName = lib.escapeString(name);
+		const cornerNames: Record<string, string> = { ne: "northeast", se: "southeast", sw: "southwest", nw: "northwest" };
+		const escapedDirection = lib.escapeString(cornerNames[data.corner] || data.corner);
+		await this.sendRcon(`/sc gridworld.corner_teleport_response("${escapedPlayerName}", "${escapedAddress}", "${escapedServerName}", "${escapedDirection}")`);
+	}
+
+	private async handleCornerEntityTransferIpc(data: CornerEntityTransferIPC) {
+		const targetInstanceId = this.cornerNeighbors[data.corner];
+		if (!targetInstanceId) {
+			this.logger.warn(`No diagonal neighbor for corner ${data.corner}`);
+			return;
+		}
+		await this.instance.sendTo(
+			{ instanceId: targetInstanceId },
+			new messages.GridworldDiagonalEntityTransfer(data.entity_transfers),
+		);
+	}
+
+	async handleDiagonalEntityTransfer(message: messages.GridworldDiagonalEntityTransfer) {
+		const json = lib.escapeString(JSON.stringify({
+			entity_transfers: message.entityTransfers,
+		}));
+		await this.sendRcon(`/sc gridworld.receive_diagonal_entity('${json}')`, true);
+		return { success: true };
 	}
 }
