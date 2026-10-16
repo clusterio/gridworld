@@ -1,46 +1,37 @@
 {
 	"name": "gridworld",
-	"version": "3.0.0",
-	"description": "Clusterio plugin for infinite tiled Factorio worlds",
+	"version": "4.0.0",
+	"description": "Gridworld v2: an infinite tiled world built on Universal Edges",
+	"license": "BlueOak-1.0.0",
+	"repository": { "type": "git", "url": "https://github.com/clusterio/gridworld" },
+	"private": true,
+	"type": "module",
 	"main": "dist/node/index.js",
-	"scripts": {
-		"prepare": "tsc --build && webpack-cli --mode production",
-		"test": "echo \"Error: run tests from root\" && exit 1",
-		"watch": "tsc --build --watch"
-	},
-	"engines": {
-		"node": ">=18"
-	},
+	"scripts": { "lint": "eslint --max-warnings 0 . && luacheck .", "prepare": "tsc --build tsconfig.node.json && webpack-cli --mode production", "test": "node --test \"dist/node/test/unit/**/*.test.js\" && lua5.2 ../universal_edges/test/unit/run.lua .. test/unit/*_test.lua" },
+	"engines": { "node": ">=22" },
 	"peerDependencies": {
-		"@clusterio/controller": "^2.0.0-alpha.0",
-		"@clusterio/host": "^2.0.0-alpha.0",
-		"@clusterio/lib": "^2.0.0-alpha.0",
-		"@clusterio/web_ui": "^2.0.0-alpha.0"
-	},
-	"devDependencies": {
-		"@clusterio/controller": "^2.0.0-alpha.23",
-		"@clusterio/host": "^2.0.0-alpha.23",
-		"@clusterio/lib": "^2.0.0-alpha.23",
-		"@clusterio/web_ui": "^2.0.0-alpha.23",
-		"@types/node": "^20.17.19",
-		"@types/react": "^18.3.18",
-		"antd": "^5.24.2",
-		"react": "^18.2.0",
-		"react-dom": "^18.2.0",
-		"typescript": "^5.7.3",
-		"webpack": "^5.98.0",
-		"webpack-cli": "^5.1.4",
-		"webpack-merge": "^5.9.0"
+		"@clusterio/controller": "workspace:^",
+		"@clusterio/host": "workspace:^",
+		"@clusterio/lib": "workspace:^",
+		"universal_edges": "workspace:^"
 	},
 	"dependencies": {
-		"@sinclair/typebox": "^0.30.4"
+		"@sinclair/typebox": "catalog:"
 	},
-	"publishConfig": {
-		"access": "public"
-	},
-	"keywords": [
-		"clusterio",
-		"clusterio-plugin",
-		"factorio"
-	]
+	"devDependencies": {
+		"@clusterio/controller": "workspace:^",
+		"@clusterio/host": "workspace:^",
+		"@clusterio/lib": "workspace:^",
+		"@clusterio/web_ui": "workspace:^",
+		"@types/node": "catalog:",
+		"@types/react": "catalog:",
+		"antd": "catalog:",
+		"react": "catalog:",
+		"react-dom": "catalog:",
+		"typescript": "catalog:",
+		"universal_edges": "workspace:^",
+		"webpack": "catalog:",
+		"webpack-cli": "catalog:",
+		"webpack-merge": "catalog:"
+	}
 }

@@ -3,11 +3,14 @@
 	"compilerOptions": {
 		"lib": ["es2023"],
 		"module": "nodenext",
-		"moduleResolution": "nodenext",
+		"moduleResolution": "node16",
 		"target": "es2022",
 		"forceConsistentCasingInFileNames": true,
 		"outDir": "dist/node"
 	},
-	"include": ["./**/*.ts"],
-	"exclude": ["test/*", "./dist/*"]
+	"references": [
+		{ "path": "../universal_edges/tsconfig.node.json" }
+	],
+	"include": ["./*.ts", "./world/**/*.ts", "./test/unit/**/*.ts", "./test/bench/**/*.ts"],
+	"exclude": ["./dist/*"]
 }

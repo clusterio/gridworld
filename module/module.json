@@ -1,12 +1,7 @@
 {
 	"name": "gridworld",
-	"load": [
-		"control.lua"
-	],
-	"require": [
-		"globals.lua"
-	],
-	"dependencies": {
-		"clusterio": "*"
-	}
+	"version": "4.0.0",
+	"dependencies": { "clusterio": "*", "universal_edges": "*" },
+	"load": ["control.lua"],
+	"require": ["globals.lua"]
 }
