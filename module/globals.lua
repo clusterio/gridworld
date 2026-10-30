@@ -1,6 +1,14 @@
---- Expose any globals here, typically just your control file if you want to access it through rcon or commands
--- luacheck: globals gridworld rail_sync_manager train_path_manager time_sync_manager
-gridworld = require("modules/gridworld/control")
-rail_sync_manager = require("modules/gridworld/rail_sync_manager")
-train_path_manager = require("modules/gridworld/train_path_manager")
-time_sync_manager = require("modules/gridworld/time_sync_manager")
+-- Gridworld's RCON entry point (SP2 spec §4): its state.
+gw_rt = {
+	--- /sc rcon.print(helpers.table_to_json(gw_rt.state())): one record per planet surface (surfaces spec §8.1).
+	state = function()
+		local s = storage.gridworld
+		local cleanup = 0
+		for _ in pairs(s.cleanup) do
+			cleanup = cleanup + 1
+		end
+		return {
+			schema = s.schema, tiles = s.tiles, configured = s.configured, cleanup = cleanup, time = s.time, stats = s.stats,
+		}
+	end,
+}

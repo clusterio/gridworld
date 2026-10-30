@@ -5,7 +5,8 @@ const { merge } = require("webpack-merge");
 
 const common = require("@clusterio/web_ui/webpack.common");
 
-module.exports = (env = {}) => merge(common(env), {
+// The gridworld web bundle (D30), as plugins/player_sync/webpack.config.cjs.
+module.exports = (env = {}, argv = {}) => merge(common(env, argv), {
 	context: __dirname,
 	entry: "./web/index.tsx",
 	output: {
@@ -26,8 +27,6 @@ module.exports = (env = {}) => merge(common(env), {
 				"antd": { import: false },
 				"react": { import: false },
 				"react-dom": { import: false },
-				"react-router": { import: false },
-				"react-router-dom": { import: false },
 			},
 		}),
 	],

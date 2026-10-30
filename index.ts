@@ -1,150 +1,94 @@
-import * as lib from "@clusterio/lib";
-import * as messages from "./messages";
-
-lib.definePermission({
-	name: "gridworld.view",
-	title: "View gridworld",
-	description: "View gridworld tiles and status",
-	grantByDefault: true,
-});
-
-lib.definePermission({
-	name: "gridworld.manage",
-	title: "Manage gridworld",
-	description: "Create or delete gridworld tiles",
-});
+import type * as lib from "@clusterio/lib";
+import {
+	DaytimeAnchorEvent, EvolutionApplyEvent, EvolutionReportEvent, TileCreateRequest, TilePlanetsEvent, TogglesEvent,
+	WorldCreateRequest, WorldDeleteRequest, WorldGetRequest, WorldLayoutEvent, type TileConfig,
+} from "./world/contracts.js";
 
 declare module "@clusterio/lib" {
-	export interface ControllerConfigFields {
-		"gridworld.map_exchange_string": string;
-		"gridworld.tile_size": number;
-		"gridworld.surface_name": string;
-		"gridworld.initial_tile_x": number;
-		"gridworld.initial_tile_y": number;
-		"gridworld.auto_start_instances": boolean;
-		"gridworld.save_name_prefix": string;
-		"gridworld.ticks_per_day": number;
-	}
 	export interface InstanceConfigFields {
-		"gridworld.tile_x": number;
-		"gridworld.tile_y": number;
-		"gridworld.tile_size": number;
-		"gridworld.surface_name": string;
+		"gridworld.tile": TileConfig | null;
+	}
+	export interface ControllerConfigFields {
+		"gridworld.pollution_border": boolean;
+		"gridworld.cross_border_raids": boolean;
+		"gridworld.cross_border_expansion": boolean;
+		"gridworld.shared_evolution": boolean;
+	}
+	export interface Permissions {
+		"gridworld.view": never;
+		"gridworld.manage": never;
 	}
 }
+
+const toggle = (title: string, description: string) => (
+	{ title, description, type: "boolean" as const, initialValue: true }
+);
 
 export const plugin: lib.PluginDeclaration = {
 	name: "gridworld",
 	title: "Gridworld",
-	description: "Creates an infinite tiled world backed by Universal Edges.",
-
-	controllerEntrypoint: "./dist/node/controller",
-	controllerConfigFields: {
-		"gridworld.map_exchange_string": {
-			title: "Map Exchange String",
-			description: "Map exchange string used to generate tiles.",
-			type: "string",
-			initialValue: ">>>eNpjYmBg8AFiBh6W5PzEHAaGBnsY5krOLyhILdLNL0pFFuZMLipNSdXNz0RVnJqXmlupm5RYjKKYI7MoPw/dBJ68xNKyzOL45JzMtDRkCdai/OTsYmQRseKSxKKSzLz0+MSi1MT43PzM4pJSVNNYi0vy81BFSopSU1GM4S4tSszLLM1FdwlreWJJahGyCANj2XeTFw0tcgwg/L+eQeH/fxAGsh4AQwmEGRgbIKoZgYIwwAr1DIOCIxA7IYxjZKwWWef+sGqKPSNEpZ4DlPEBKnIgCSbiCWP4OeCUUoExTJDMMQaDz0gMiKUlQCugqjgcEAyIZAtIkpGx9+3WBd+PXbBj/LPy4yXfpAR7RkNXkXcfjNbZASXZQd5lghOzZoLATphXGGBmPrCHSt20Zzx7BgTe2DOygnSIgAgHCyBxwJuZgVGAD8ha0AMkFGQYYE6zgxkj4sCYBgbfYD55DGNctkf3BzAgbECGy4GIEyACbCHcZYwQpkO/A6ODPExWEqEEqN+IAdkNKQgfnoRZexjJfjSHYEYEsj/QRFQcsEQDF8jCFDjxghnuGmB4XmCH8RzmOzAygxggVV+AYhAeSAZmFIQWcAAHNzM8UX6wR01pIAbIkCB3zfkAC3S/Eg==<<<",
-		},
-		"gridworld.tile_size": {
-			title: "Tile Size",
-			description: "Tile size in map units (tiles).",
-			type: "number",
-			initialValue: 1024,
-		},
-		"gridworld.surface_name": {
-			title: "Surface Name",
-			description: "Surface name to use for edge endpoints.",
-			type: "string",
-			initialValue: "nauvis",
-		},
-		"gridworld.initial_tile_x": {
-			title: "Initial Tile X",
-			description: "X coordinate of the initial tile.",
-			type: "number",
-			initialValue: 0,
-		},
-		"gridworld.initial_tile_y": {
-			title: "Initial Tile Y",
-			description: "Y coordinate of the initial tile.",
-			type: "number",
-			initialValue: 0,
-		},
-		"gridworld.auto_start_instances": {
-			title: "Auto Start Instances",
-			description: "Legacy setting (ignored). Instances now start as players explore.",
-			type: "boolean",
-			initialValue: false,
-		},
-		"gridworld.save_name_prefix": {
-			title: "Save Name Prefix",
-			description: "Prefix to use for tile save names.",
-			type: "string",
-			initialValue: "gridworld",
-		},
-		"gridworld.ticks_per_day": {
-			title: "Ticks Per Day",
-			description: "Length of a full day/night cycle in game ticks. Factorio default is 25000 (~7 min at 60 UPS). Use higher values for longer days.",
-			type: "number",
-			initialValue: 25000,
-		},
-	},
-
-	instanceEntrypoint: "./dist/node/instance",
-	instanceConfigFields: {
-		"gridworld.tile_x": {
-			title: "Tile X",
-			description: "Tile X coordinate (managed by gridworld).",
-			type: "number",
-			initialValue: 0,
-		},
-		"gridworld.tile_y": {
-			title: "Tile Y",
-			description: "Tile Y coordinate (managed by gridworld).",
-			type: "number",
-			initialValue: 0,
-		},
-		"gridworld.tile_size": {
-			title: "Tile Size",
-			description: "Tile size in map units (managed by gridworld).",
-			type: "number",
-			initialValue: 1024,
-		},
-		"gridworld.surface_name": {
-			title: "Surface Name",
-			description: "Surface name to use for gridworld boundaries (managed by gridworld).",
-			type: "string",
-			initialValue: "nauvis",
-		},
-	},
-
-	messages: [
-		messages.GridworldStateUpdate,
-		messages.GridworldStateRequest,
-		messages.GridworldCreateRequest,
-		messages.GridworldDeleteRequest,
-		messages.GridworldSyncTileAreas,
-		messages.GridworldSyncRailEntities,
-		messages.GridworldApplyRailEntities,
-		messages.GridworldRequestTrainPath,
-		messages.GridworldForwardTrainPath,
-		messages.GridworldReturnTrainPathResult,
-		messages.GridworldReturnTrainPath,
-		messages.GridworldSyncUeStops,
-		messages.GridworldApplyUeStops,
-		messages.GridworldSyncDaytime,
-		messages.GridworldCreateTrainProxy,
-		messages.GridworldClearTrainPath,
-		messages.GridworldForwardClearTrainPath,
-		messages.GridworldRemoveTrainProxy,
-		messages.GridworldForwardRemoveTrainProxy,
-		messages.GridworldCornerNeighbors,
-		messages.GridworldCornerTeleportPlayer,
-		messages.GridworldDiagonalEntityTransfer,
-	],
-
+	description: "Infinite tiled world of Clusterio instances stitched together with Universal Edges (v2).",
+	controllerEntrypoint: "dist/node/controller.js",
+	instanceEntrypoint: "dist/node/instance.js",
+	ctlEntrypoint: "dist/node/world/ctl.js",
 	webEntrypoint: "./web",
-	routes: [
-		"/gridworld",
+	features: ["SavePatching", "ScriptCommands"],
+	// The biter toggles (owner, 2026-10-10): each reaches every running tile within seconds of a change.
+	controllerConfigFields: {
+		"gridworld.pollution_border": toggle(
+			"Pollution border",
+			"The border's first-row sweep and the leak report to the neighbour. Off, the second row's sinks still " +
+			"absorb what crosses the border, so pollution doesn't spread outside, but nothing reaches the neighbour " +
+			"and raids have no virtual pollution to feed on.",
+		),
+		"gridworld.cross_border_raids": toggle(
+			"Cross-border raids",
+			"Spawners spend the virtual cloud on raids that cross to the neighbour, and the oracles name their " +
+			"targets. Off, the cloud keeps running but buys nothing, no oracle is placed and an arriving raid is " +
+			"dropped.",
+		),
+		"gridworld.cross_border_expansion": toggle(
+			"Cross-border expansion",
+			"Expansion parties bound past a live border cross and build on the neighbour. Off, they build as " +
+			"vanilla (gridworld removes a base outside the tile) and an arriving party is dropped.",
+		),
+		"gridworld.shared_evolution": toggle(
+			"Shared evolution",
+			"One evolution per planet for the cluster. Off, tiles don't report and the controller doesn't apply: " +
+			"each tile's evolution runs as vanilla from where it is.",
+		),
+	},
+	instanceConfigFields: {
+		"gridworld.tile": {
+			title: "Gridworld tile",
+			description: "Managed by gridworld: the world and tile this instance is. Never edit it.",
+			type: "object",
+			optional: true,
+		},
+	},
+	messages: [
+		WorldCreateRequest,
+		WorldDeleteRequest,
+		WorldGetRequest,
+		TileCreateRequest,
+		WorldLayoutEvent,
+		DaytimeAnchorEvent,
+		TilePlanetsEvent,
+		EvolutionReportEvent,
+		EvolutionApplyEvent,
+		TogglesEvent,
+	],
+	permissions: [
+		{
+			name: "gridworld.view",
+			title: "View gridworld",
+			description: "Show the world and subscribe to its tile layout.",
+			grantByDefault: true,
+		},
+		{
+			name: "gridworld.manage",
+			title: "Manage gridworld",
+			description: "Create and delete the world, and plan tiles.",
+		},
 	],
 };

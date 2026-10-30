@@ -1,362 +1,117 @@
-import * as lib from "@clusterio/lib";
-import { BaseInstancePlugin } from "@clusterio/host";
-import * as messages from "./messages";
+import type { InstancePluginContext } from "@clusterio/host";
+import { on, openBridge } from "universal_edges/runtime";
+import {
+	DaytimeAnchorEvent, EvolutionApplyEvent, EvolutionReportEvent, EvolutionReportPayload, TilePlanetsEvent,
+	TilePlanetsPayload, TogglesEvent, type Anchor, type PlanetDay, type Toggles,
+} from "./world/contracts.js";
+import { OffsetClock, canonical, period, synced } from "./world/time.js";
 
-declare module "@clusterio/lib" {
-	export interface InstanceConfigFields {
-		"gridworld.tile_x": number;
-		"gridworld.tile_y": number;
-		"gridworld.tile_size": number;
-		"gridworld.surface_name": string;
-	}
-}
+/** §7.3: the tile config goes to Lua at every start and once a minute; Lua answers each with its planets (§4.1). */
+const CONFIG_MS = 60_000;
 
-type RailEntitiesIPC = {
-	tile_x: number;
-	tile_y: number;
-	tile_size: number;
-	entities: messages.RailEntity[];
-};
+/**
+ * Gridworld's instance plugin (SP2 spec §4). It pushes the tile config, with the controller's biter toggles once it has
+ * them (the controller sends them at every start), every minute and whenever the toggles come; forwards Lua's planet
+ * and evolution reports to the controller, and keeps each planet's day in step with the controller's anchor on that
+ * planet's own interval (surfaces spec §9.4). It holds no durable state, and an instance without the gridworld.tile
+ * config is left alone.
+ */
+export default async function loadInstancePlugin(context: InstancePluginContext) {
+	const { instance, plugin } = context;
+	let clock = new OffsetClock();
+	let anchor: Anchor | undefined;
+	let reported: PlanetDay[] = [];
+	/**
+	 * The controller's latest biter toggles, for the minute re-sends only: Clusterio makes a new plugin object at every
+	 * start, and the controller sends them again.
+	 */
+	let toggles: Toggles | undefined;
+	let timer: ReturnType<typeof setInterval> | undefined;
+	/** W28: one interval per synced planet, armed once, cleared at every start, stop and exit. */
+	const timers = new Map<string, ReturnType<typeof setInterval>>();
 
-type UeStopsIPC = {
-	tile_x: number;
-	tile_y: number;
-	stops: messages.UeStop[];
-};
+	const bridge = openBridge(context, {
+		// Surfaces spec §4.1 (W25): every report goes to the controller, and the planets' days arm their syncs.
+		"gw.tile.planets": on(TilePlanetsPayload, report => {
+			reported = report.planets;
+			instance.sendTo("controller", new TilePlanetsEvent(report.planets.map(p => p.surface)));
+			arm();
+		}),
+		// Cross-border biters spec §8: Lua's evolution report goes to the controller.
+		"gw.evolution.report": on(EvolutionReportPayload, report => {
+			instance.sendTo("controller", new EvolutionReportEvent(report.planets, report.timeFactor));
+		}),
+	});
 
-type ReturnTrainPathIPC = {
-	id: number;
-	path: string[] | Record<string, string>;
-	source_instance_id: number;
-};
-
-type RequestTrainPathIPC = {
-	id: number;
-	surface: string;
-	position: { x: number; y: number };
-	direction: number;
-	destination: string;
-};
-
-type CornerNeighbors = { ne?: number; se?: number; sw?: number; nw?: number };
-
-type CornerTeleportPlayerIPC = {
-	player_name: string;
-	corner: "ne" | "se" | "sw" | "nw";
-	world_position: [number, number];
-};
-
-type CornerEntityTransferIPC = {
-	corner: "ne" | "se" | "sw" | "nw";
-	entity_transfers: Array<{
-		type: "player" | "vehicle";
-		world_position: [number, number];
-		player_name?: string;
-		serialized_entity?: Record<string, unknown>;
-		driver_name?: string;
-		passenger_name?: string;
-	}>;
-};
-
-export class InstancePlugin extends BaseInstancePlugin {
-	private warnedMissingConfig = false;
-	private cornerNeighbors: CornerNeighbors = {};
-
-	async init() {
-		this.instance.handle(messages.GridworldSyncTileAreas, this.handleGridworldSyncTileAreas.bind(this));
-		this.instance.handle(messages.GridworldApplyRailEntities, this.handleGridworldApplyRailEntities.bind(this));
-		this.instance.handle(messages.GridworldApplyUeStops, this.handleApplyUeStops.bind(this));
-		this.instance.handle(messages.GridworldReturnTrainPath, this.handleReturnTrainPath.bind(this));
-		this.instance.handle(messages.GridworldForwardTrainPath, this.handleForwardTrainPath.bind(this));
-		this.instance.handle(messages.GridworldSyncDaytime, this.handleSyncDaytime.bind(this));
-		this.instance.handle(messages.GridworldCreateTrainProxy, this.handleCreateTrainProxy.bind(this));
-		this.instance.handle(messages.GridworldForwardClearTrainPath, this.handleForwardClearTrainPath.bind(this));
-		this.instance.handle(messages.GridworldForwardRemoveTrainProxy, this.handleForwardRemoveTrainProxy.bind(this));
-
-		// Receive rail entity data collected by Lua via clusterio_api.send_json("gridworld:rail_entities", ...)
-		(this.instance.server as any).on("ipc-gridworld:rail_entities", (data: RailEntitiesIPC) => {
-			this.handleRailEntitiesIpc(data).catch(err => this.logger.error(
-				`Error handling rail entities IPC:\n${err.stack}`,
-			));
-		});
-
-		// Receive ue_stops data from Lua via clusterio_api.send_json("gridworld:ue_stops", ...)
-		(this.instance.server as any).on("ipc-gridworld:ue_stops", (data: UeStopsIPC) => {
-			this.handleUeStopsIpc(data).catch(err => this.logger.error(
-				`Error handling ue_stops IPC:\n${err.stack}`,
-			));
-		});
-
-		// Receive train path requests from Lua via clusterio_api.send_json("gridworld:request_train_path", ...)
-		(this.instance.server as any).on("ipc-gridworld:request_train_path", (data: RequestTrainPathIPC) => {
-			this.handleRequestTrainPathIpc(data).catch(err => this.logger.error(
-				`Error handling request_train_path IPC:\n${err.stack}`,
-			));
-		});
-
-		// Receive train path results from Lua (pathworld) via clusterio_api.send_json("gridworld:return_train_path", ...)
-		(this.instance.server as any).on("ipc-gridworld:return_train_path", (data: ReturnTrainPathIPC) => {
-			this.handleReturnTrainPathIpc(data).catch(err => this.logger.error(
-				`Error handling return_train_path IPC:\n${err.stack}`,
-			));
-		});
-
-		// Receive clear path request from Lua via clusterio_api.send_json("gridworld:clear_train_path_request", ...)
-		(this.instance.server as any).on("ipc-gridworld:clear_train_path_request", (data: { id: number }) => {
-			this.instance.sendTo("controller", new messages.GridworldClearTrainPath(data.id));
-		});
-
-		// Receive remove proxy request from Lua via clusterio_api.send_json("gridworld:remove_train_proxy", ...)
-		(this.instance.server as any).on("ipc-gridworld:remove_train_proxy", (data: { last_edge_stop: string; destination: string }) => {
-			this.instance.sendTo("controller", new messages.GridworldRemoveTrainProxy(data.last_edge_stop, data.destination));
-		});
-
-		// Corner diagonal transport IPC handlers
-		(this.instance.server as any).on("ipc-gridworld:corner_teleport_player", (data: CornerTeleportPlayerIPC) => {
-			this.handleCornerTeleportPlayerIpc(data).catch(err => this.logger.error(
-				`Error handling corner_teleport_player IPC:\n${err.stack}`,
-			));
-		});
-		(this.instance.server as any).on("ipc-gridworld:corner_entity_transfer", (data: CornerEntityTransferIPC) => {
-			this.handleCornerEntityTransferIpc(data).catch(err => this.logger.error(
-				`Error handling corner_entity_transfer IPC:\n${err.stack}`,
-			));
-		});
-
-		this.instance.handle(messages.GridworldCornerNeighbors, this.handleCornerNeighbors.bind(this));
-		this.instance.handle(messages.GridworldDiagonalEntityTransfer, this.handleDiagonalEntityTransfer.bind(this));
+	function sendConfig() {
+		const config = instance.config.get("gridworld.tile");
+		if (config) {
+			bridge.send("gw.tile.config", toggles ? { ...config, toggles } : config);
+		}
 	}
 
-	async handleForwardRemoveTrainProxy(event: messages.GridworldForwardRemoveTrainProxy) {
-		const json = lib.escapeString(JSON.stringify({ destination: event.destination }));
-		await this.sendRcon(`/sc train_path_manager.remove_train_proxies('${json}')`);
-	}
-
-	private getBoundaryConfig(logMissing: boolean): { tileX: number; tileY: number; tileSize: number; surfaceName: string } | null {
-		const tileX = this.instance.config.get("gridworld.tile_x");
-		const tileY = this.instance.config.get("gridworld.tile_y");
-		const tileSize = this.instance.config.get("gridworld.tile_size");
-		const surfaceName = this.instance.config.get("gridworld.surface_name");
-
-		if (
-			typeof tileX !== "number"
-			|| typeof tileY !== "number"
-			|| typeof tileSize !== "number"
-			|| typeof surfaceName !== "string"
-		) {
-			if (logMissing && !this.warnedMissingConfig) {
-				this.logger.warn("Missing gridworld boundary config; skipping boundary setup.");
-				this.warnedMissingConfig = true;
+	function start(surface: string, ticksPerDay: number) {
+		const ticks = period(ticksPerDay);
+		const send = () => {
+			if (anchor) {
+				const daytime = canonical({ ...anchor, ticksPerDay }, clock.now(Date.now()));
+				bridge.send("gw.time", { surface, daytime, base: ticksPerDay, period: ticks });
 			}
-			return null;
-		}
-
-		return {
-			tileX,
-			tileY,
-			tileSize,
-			surfaceName,
 		};
+		send();
+		timers.set(surface, setInterval(send, ticks / 60 * 1000));
 	}
 
-	private isPathworld(): boolean {
-		return this.instance.config.get("instance.name") === "pathworld";
-	}
-
-	private async sendBoundaryConfig(logMissing: boolean) {
-		if (this.isPathworld()) {
+	/**
+	 * §9.4: once the anchor and Lua's planets are in, each planet with a day gets its own interval, armed once (the
+	 * planet set can't change within a run: a mod change needs a restart, §4.4). Its first gw.time goes at arming,
+	 * which always follows an applied config, since Lua reports only in answer to one.
+	 */
+	function arm() {
+		const config = instance.config.get("gridworld.tile");
+		if (!anchor || !config) {
 			return;
 		}
-		const config = this.getBoundaryConfig(logMissing);
-		if (!config) {
-			return;
-		}
-		const escapedSurfaceName = lib.escapeString(config.surfaceName);
-		await this.sendRcon(
-			`/sc gridworld.set_config({tile_x = ${config.tileX}, tile_y = ${config.tileY}, tile_size = ${config.tileSize}, surface_name = "${escapedSurfaceName}"})`,
-		);
-	}
-
-	async onInstanceConfigFieldChanged(field: string) {
-		if (!field.startsWith("gridworld.")) {
-			return;
-		}
-		if (
-			field !== "gridworld.tile_x"
-			&& field !== "gridworld.tile_y"
-			&& field !== "gridworld.tile_size"
-			&& field !== "gridworld.surface_name"
-		) {
-			return;
-		}
-		await this.sendBoundaryConfig(false);
-	}
-
-	async handleGridworldSyncTileAreas(event: messages.GridworldSyncTileAreas) {
-		const tilesJson = lib.escapeString(JSON.stringify(event.tiles));
-		await this.sendRcon(`/sc gridworld.sync_tile_areas('${tilesJson}')`);
-	}
-
-	async onStart() {
-		if (this.isPathworld()) {
-			await this.sendRcon("/sc gridworld.set_pathworld()");
-		} else {
-			await this.sendBoundaryConfig(true);
+		for (const { surface, ticksPerDay } of synced(config.surface, anchor, reported)) {
+			if (!timers.has(surface)) {
+				start(surface, ticksPerDay);
+			}
 		}
 	}
 
-	private async handleRailEntitiesIpc(data: RailEntitiesIPC) {
-		const instanceId = this.instance.config.get("instance.id") as number;
-		const entities: messages.RailEntity[] = Array.isArray(data.entities) ? data.entities : Object.values(data.entities as any);
-		this.instance.sendTo("controller", new messages.GridworldSyncRailEntities(
-			instanceId,
-			data.tile_x,
-			data.tile_y,
-			data.tile_size,
-			entities,
-		));
-	}
-
-	async handleGridworldApplyRailEntities(event: messages.GridworldApplyRailEntities) {
-		const json = lib.escapeString(JSON.stringify({
-			tile_x:    event.tileX,
-			tile_y:    event.tileY,
-			tile_size: event.tileSize,
-			entities:  event.entities,
-		}));
-		await this.sendRcon(`/sc rail_sync_manager.apply_rail_entities('${json}')`);
-	}
-
-	private async handleUeStopsIpc(data: UeStopsIPC) {
-		const stops: messages.UeStop[] = Array.isArray(data.stops) ? data.stops : Object.values(data.stops as any);
-		this.instance.sendTo("controller", new messages.GridworldSyncUeStops(
-			data.tile_x,
-			data.tile_y,
-			stops,
-		));
-	}
-
-	async handleApplyUeStops(event: messages.GridworldApplyUeStops) {
-		const json = lib.escapeString(JSON.stringify({
-			tile_x: event.tileX,
-			tile_y: event.tileY,
-			stops:  event.stops,
-		}));
-		await this.sendRcon(`/sc rail_sync_manager.apply_ue_stops('${json}')`);
-	}
-
-	private async handleRequestTrainPathIpc(data: RequestTrainPathIPC) {
-		// Normalize position — Factorio MapPosition may serialize as {"1":x,"2":y} instead of {"x":x,"y":y}
-		const pos = data.position as any;
-		const position = { x: pos.x ?? pos["1"] ?? 0, y: pos.y ?? pos["2"] ?? 0 };
-		this.logger.info(`[gridworld] request_train_path IPC received: train=${data.id} destination="${data.destination}" pos=${position.x},${position.y}`);
-		this.instance.sendTo("controller", new messages.GridworldRequestTrainPath(
-			data.id,
-			data.surface,
-			position,
-			data.direction,
-			data.destination
-		));
-	}
-
-	private async handleReturnTrainPathIpc(data: ReturnTrainPathIPC) {
-		// Factorio serializes an empty Lua table as {} (object) not [] (array).
-		// Normalize path to always be an array.
-		const path: string[] = Array.isArray(data.path) ? data.path : Object.values(data.path as any);
-		this.logger.info(`[gridworld] return_train_path IPC received from pathworld: train=${data.id} sourceInstance=${data.source_instance_id} pathLen=${path.length}`);
-		this.instance.sendTo("controller", new messages.GridworldReturnTrainPathResult(
-			data.id,
-			path,
-			data.source_instance_id,
-		));
-	}
-
-	async handleReturnTrainPath(event: messages.GridworldReturnTrainPath) {
-		this.logger.info(`[gridworld] return_train_path received: train=${event.id}`);
-		const json = lib.escapeString(JSON.stringify({ id: event.id, path: event.path }));
-		await this.sendRcon(`/sc train_path_manager.apply_train_path_result('${json}')`);
-	}
-
-	async handleSyncDaytime(event: messages.GridworldSyncDaytime) {
-		const json = lib.escapeString(JSON.stringify({
-			daytime: event.daytime,
-			is_startup: event.isStartup,
-			ticks_per_day: event.ticksPerDay,
-		}));
-		await this.sendRcon(`/sc time_sync_manager.apply_canonical_daytime('${json}')`);
-	}
-
-	async handleCreateTrainProxy(event: messages.GridworldCreateTrainProxy) {
-		this.logger.info(`[gridworld] create_train_proxy received: destination="${event.destination}" edgeId=${event.edgeId} offset=${event.offset}`);
-		const json = lib.escapeString(JSON.stringify({
-			destination: event.destination,
-			edge_id: event.edgeId,
-			offset: event.offset,
-		}));
-		await this.sendRcon(`/sc train_path_manager.create_train_proxy('${json}')`);
-	}
-
-	async handleForwardClearTrainPath(event: messages.GridworldForwardClearTrainPath) {
-		const json = lib.escapeString(JSON.stringify({ id: event.id }));
-		await this.sendRcon(`/sc train_path_manager.clear_train_path_request('${json}')`);
-	}
-
-	async handleForwardTrainPath(event: messages.GridworldForwardTrainPath) {
-		this.logger.info(`[gridworld] forward_train_path received: train=${event.id} destination=${event.destination} sourceInstance=${event.sourceInstanceId}`);
-		const json = lib.escapeString(JSON.stringify({
-			id: event.id,
-			surface: event.surface,
-			position: event.position,
-			direction: event.direction,
-			destination: event.destination,
-			sourceInstanceId: event.sourceInstanceId,
-		}));
-		await this.sendRcon(`/sc train_path_manager.find_train_path('${json}')`);
-	}
-
-	// --- Corner diagonal transport ---
-
-	async handleCornerNeighbors(event: messages.GridworldCornerNeighbors) {
-		this.cornerNeighbors = event.neighbors;
-		const json = lib.escapeString(JSON.stringify(event.neighbors));
-		await this.sendRcon(`/sc gridworld.set_corner_neighbors('${json}')`);
-	}
-
-	private async handleCornerTeleportPlayerIpc(data: CornerTeleportPlayerIPC) {
-		const targetInstanceId = this.cornerNeighbors[data.corner];
-		if (!targetInstanceId) {
-			this.logger.warn(`No diagonal neighbor for corner ${data.corner}`);
-			return;
+	function stop() {
+		clearInterval(timer);
+		timer = undefined;
+		for (const t of timers.values()) {
+			clearInterval(t);
 		}
-		const { address, name } = await this.instance.sendTo(
-			"controller",
-			new messages.GridworldCornerTeleportPlayer(data.player_name, targetInstanceId),
-		);
-		const escapedPlayerName = lib.escapeString(data.player_name);
-		const escapedAddress = lib.escapeString(address);
-		const escapedServerName = lib.escapeString(name);
-		const cornerNames: Record<string, string> = { ne: "northeast", se: "southeast", sw: "southwest", nw: "northwest" };
-		const escapedDirection = lib.escapeString(cornerNames[data.corner] || data.corner);
-		await this.sendRcon(`/sc gridworld.corner_teleport_response("${escapedPlayerName}", "${escapedAddress}", "${escapedServerName}", "${escapedDirection}")`);
+		timers.clear();
 	}
 
-	private async handleCornerEntityTransferIpc(data: CornerEntityTransferIPC) {
-		const targetInstanceId = this.cornerNeighbors[data.corner];
-		if (!targetInstanceId) {
-			this.logger.warn(`No diagonal neighbor for corner ${data.corner}`);
-			return;
+	instance.handle(DaytimeAnchorEvent, async (event: DaytimeAnchorEvent) => {
+		anchor = { epochMs: event.epochMs, epochDaytime: event.epochDaytime, ticksPerDay: event.ticksPerDay };
+		clock.sample(event.sentAtMs, Date.now());
+		arm();
+	});
+	instance.handle(EvolutionApplyEvent, async (event: EvolutionApplyEvent) => {
+		bridge.send("gw.evolution.apply", { planets: event.planets });
+	});
+	// The biter toggles (owner, 2026-10-10) go to Lua at once; Lua applies them at every config.
+	instance.handle(TogglesEvent, async (event: TogglesEvent) => {
+		toggles = event.toggles;
+		sendConfig();
+	});
+	instance.hooks.start.attach(plugin.name, async () => {
+		// The offset's samples count "since the instance started" (§11.1); the planets come with this boot's report.
+		clock = new OffsetClock();
+		anchor = undefined;
+		reported = [];
+		stop();
+		if (instance.config.get("gridworld.tile")) {
+			sendConfig();
+			timer = setInterval(sendConfig, CONFIG_MS);
 		}
-		await this.instance.sendTo(
-			{ instanceId: targetInstanceId },
-			new messages.GridworldDiagonalEntityTransfer(data.entity_transfers),
-		);
-	}
-
-	async handleDiagonalEntityTransfer(message: messages.GridworldDiagonalEntityTransfer) {
-		const json = lib.escapeString(JSON.stringify({
-			entity_transfers: message.entityTransfers,
-		}));
-		await this.sendRcon(`/sc gridworld.receive_diagonal_entity('${json}')`, true);
-		return { success: true };
-	}
+	});
+	instance.hooks.stop.attach(plugin.name, async () => stop());
+	instance.hooks.exit.attach(plugin.name, () => stop());
 }
