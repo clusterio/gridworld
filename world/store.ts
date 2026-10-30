@@ -148,22 +148,22 @@ export class WorldStore {
 	 */
 	async createWorld(opts: CreateOptions): Promise<World> {
 		if (this.data.world) {
-			throw new lib.RequestError(`world ${this.data.world.id} exists; delete it first`);
+			throw new lib.ConflictError(`world ${this.data.world.id} exists; delete it first`);
 		}
 		const tileSize = opts.tileSize ?? 512;
 		if (!Number.isInteger(tileSize) || tileSize < 64 || tileSize > 4096 || tileSize % 64 !== 0) {
-			throw new lib.RequestError(`tile size ${tileSize} must be a multiple of 64 from 64 to 4096`);
+			throw new lib.ValidationError(`tile size ${tileSize} must be a multiple of 64 from 64 to 4096`);
 		}
 		const ticksPerDay = opts.ticksPerDay ?? 25000;
 		// Surfaces spec §4.2 (S6): at least 1200, so the base planet's sync period is at least 5 s;
 		// D29's 7200 went (A15).
 		if (!Number.isInteger(ticksPerDay) || ticksPerDay < 1200) {
-			throw new lib.RequestError(`ticks per day ${ticksPerDay} must be an integer of at least 1200`);
+			throw new lib.ValidationError(`ticks per day ${ticksPerDay} must be an integer of at least 1200`);
 		}
 		const surface = "nauvis";
 		const exclude = opts.exclude ?? [];
 		if (exclude.includes(surface)) {
-			throw new lib.RequestError(`the base planet ${surface} can't be excluded`);
+			throw new lib.ValidationError(`the base planet ${surface} can't be excluded`);
 		}
 		let seed = randomInt(2 ** 32);
 		let mapGenSettings: Record<string, unknown> | undefined;
@@ -173,7 +173,7 @@ export class WorldStore {
 			try {
 				parsed = lib.readMapExchangeString(opts.mapExchangeString);
 			} catch (err: any) {
-				throw new lib.RequestError(`map exchange string: ${err.message}`);
+				throw new lib.ValidationError(`map exchange string: ${err.message}`);
 			}
 			mapGenSettings = parsed.map_gen_settings as unknown as Record<string, unknown>;
 			mapSettings = parsed.map_settings as unknown as Record<string, unknown>;
@@ -183,7 +183,7 @@ export class WorldStore {
 		// map-gen-settings.json's.
 		if (opts.seed !== undefined) {
 			if (!Number.isInteger(opts.seed) || opts.seed < 0 || opts.seed >= 2 ** 32) {
-				throw new lib.RequestError(`seed ${opts.seed} must be an integer from 0 to 4294967295`);
+				throw new lib.ValidationError(`seed ${opts.seed} must be an integer from 0 to 4294967295`);
 			}
 			seed = opts.seed;
 		}
@@ -208,7 +208,7 @@ export class WorldStore {
 	async deleteWorld(): Promise<void> {
 		const world = this.data.world;
 		if (!world) {
-			throw new lib.RequestError("there is no world");
+			throw new lib.NotFoundError("there is no world");
 		}
 		if (world.deleting) {
 			await this.save(); // a retry after a failed write lands the change before it reports success
@@ -237,8 +237,11 @@ export class WorldStore {
 	/** Plan a tile; false when it is planned already. Refused without a live world. */
 	async createTile(x: number, y: number, reason: PlanReason): Promise<boolean> {
 		const world = this.data.world;
-		if (!world || world.deleting) {
-			throw new lib.RequestError(world ? "the world is being deleted" : "there is no world");
+		if (!world) {
+			throw new lib.NotFoundError("there is no world");
+		}
+		if (world.deleting) {
+			throw new lib.ConflictError("the world is being deleted");
 		}
 		if (world.tiles[tileKey(x, y)]) {
 			await this.save(); // a retry after a failed write lands the tile before it reports success
