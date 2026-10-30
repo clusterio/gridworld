@@ -7,7 +7,7 @@
 	"private": true,
 	"type": "module",
 	"main": "dist/node/index.js",
-	"scripts": { "lint": "eslint --max-warnings 0 . && luacheck .", "prepare": "tsc --build tsconfig.node.json && webpack-cli --mode production", "test": "node --test \"dist/node/test/unit/**/*.test.js\" && lua5.2 ../universal_edges/test/unit/run.lua .. test/unit/*_test.lua" },
+	"scripts": { "lint": "oxlint -c oxlint.config.mjs --max-warnings 0 . && luacheck .", "prepare": "tsc --build tsconfig.node.json && vite build", "test": "node --test \"dist/node/test/unit/**/*.test.js\" && lua5.2 ../universal_edges/test/unit/run.lua .. test/unit/*_test.lua" },
 	"engines": { "node": ">=22" },
 	"peerDependencies": {
 		"@clusterio/controller": "workspace:^",
@@ -30,8 +30,6 @@
 		"react-dom": "catalog:",
 		"typescript": "catalog:",
 		"universal_edges": "workspace:^",
-		"webpack": "catalog:",
-		"webpack-cli": "catalog:",
-		"webpack-merge": "catalog:"
+		"vite": "catalog:"
 	}
 }

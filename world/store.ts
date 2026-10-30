@@ -10,8 +10,8 @@ export type StoreIo = {
 	published(layout: Layout): void;
 };
 
-export type CreateOptions = { tileSize?: number; mapExchangeString?: string; ticksPerDay?: number;
-	exclude?: string[]; seed?: number;
+export type CreateOptions = {
+	tileSize?: number; mapExchangeString?: string; ticksPerDay?: number; exclude?: string[]; seed?: number;
 };
 
 /** Why a tile was planned (§16): world creation, `tile create`, a join next door, or a missing instance replaced. */
