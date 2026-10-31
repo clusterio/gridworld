@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as lib from "@clusterio/lib";
 import { loadDataFile, saveDataFile } from "universal_edges/runtime";
 import type { Layout, World, WorldFile } from "../../world/contracts.js";
 import { desiredEdges } from "../../world/grid.js";
@@ -72,6 +73,23 @@ test("create is refused while a world exists, deleting or not; a dropped world m
 	assert.deepEqual(disk.at(-1), { world: null });
 	await assert.rejects(store.deleteWorld(), /no world/);
 	assert.ok((await store.createWorld({ tileSize: 64 })).id !== world.id, "a new world can be created");
+});
+
+test("each refusal is the error class its requester gets: bad input, no world, or a world in the way", async () => {
+	const { store } = open();
+	await assert.rejects(store.deleteWorld(), lib.NotFoundError);
+	await assert.rejects(store.createTile(0, 0, "tile_create"), lib.NotFoundError);
+	const refused = [
+		{ tileSize: 100 }, { ticksPerDay: 1199 }, { exclude: ["nauvis"] }, { mapExchangeString: "not one" },
+		{ seed: -1 },
+	];
+	for (const opts of refused) {
+		await assert.rejects(store.createWorld(opts), lib.ValidationError, JSON.stringify(opts));
+	}
+	await store.createWorld({ tileSize: 64 });
+	await assert.rejects(store.createWorld({}), lib.ConflictError);
+	await store.deleteWorld();
+	await assert.rejects(store.createTile(1, 0, "tile_create"), lib.ConflictError);
 });
 
 test("the file: absent is an empty record, malformed throws, and a world survives a reload", async () => {
