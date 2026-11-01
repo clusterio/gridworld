@@ -19,6 +19,12 @@ function core.inside(t, x, y)
 	return x >= t.x1 and x < t.x2 and y >= t.y1 and y < t.y2
 end
 
+--- Whether a 2×2 centred at (x, y) lies across t's east or south line, wholly along that side: a power link's pole
+--- across the line (tile.lua), whose centre on that line is outside. On the west and north lines it is inside already.
+function core.straddles(t, x, y)
+	return x == t.x2 and y - 1 >= t.y1 and y + 1 <= t.y2 or y == t.y2 and x - 1 >= t.x1 and x + 1 <= t.x2
+end
+
 --- Whether chunk (cx, cy) lies outside t; exact, because T/2 is a multiple of 32.
 function core.chunk_outside(t, cx, cy)
 	local x, y = cx * 32, cy * 32

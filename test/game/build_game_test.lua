@@ -79,6 +79,37 @@ t.case("build: a centre outside is destroyed, ghosts included; a centre inside s
 	end)
 end)
 
+t.case("build: a 2×2 pole or its ghost centred on the east or south line stays (a power link's border pole); at a " ..
+	"corner it is destroyed", function(ctx)
+	ctx.at(450, function()
+		local surface = game.get_surface("nauvis")
+		local b = storage.gridworld.tiles.nauvis
+		local y, x = TY * T - 20, (b.x1 + b.x2) / 2
+		land(surface, b.x2 - 4, y - 4, b.x2 + 4, y + 4)
+		land(surface, x - 4, b.y2 - 4, x + 4, b.y2 + 4)
+		land(surface, b.x2 - 4, b.y2 - 4, b.x2 + 4, b.y2 + 4)
+		local east = surface.create_entity({ name = "substation", position = { b.x2, y }, force = "player" })
+		local south = surface.create_entity({
+			name = "entity-ghost", inner_name = "big-electric-pole", position = { x, b.y2 }, force = "player",
+		})
+		local corner = surface.create_entity({ name = "substation", position = { b.x2, b.y2 }, force = "player" })
+		for _, e in ipairs({ east, south, corner }) do
+			ctx.expect(e ~= nil, "created")
+			if e then
+				built(e)
+			end
+		end
+		ctx.expect(east ~= nil and east.valid, "a substation across the east line stays")
+		ctx.expect(south ~= nil and south.valid, "a big pole's ghost across the south line stays")
+		ctx.expect(corner ~= nil and not corner.valid, "a substation on the south-east corner is destroyed")
+		for _, e in ipairs({ east, south }) do
+			if e and e.valid then
+				e.destroy()
+			end
+		end
+	end)
+end)
+
 t.case("build: a robot's build outside the border is destroyed; the robot builds nothing there", function(ctx)
 	local ghost_at
 	ctx.at(400, function()

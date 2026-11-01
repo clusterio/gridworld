@@ -85,8 +85,8 @@ local function real(type, size, d, x, y)
 	return half(x) and half(y)
 end
 
-t.test("every build a side's border row proposes has its centre inside the tile, so §9.4 never destroys a proposed "
-	.. "build (SP2 §19; playtest 2026-10-10)", function()
+t.test("every build a side's border row proposes has its centre inside the tile, or is a 2×2 pole across the line that "
+	.. "§9.4 keeps (straddles), so §9.4 never destroys a proposed build (SP2 §19; playtest 2026-10-10)", function()
 	local b = tile(1, -1, 64)
 	local n, bad = 0, {}
 	for _, side in ipairs({ "n", "e", "s", "w" }) do
@@ -101,7 +101,8 @@ t.test("every build a side's border row proposes has its centre inside the tile,
 							local e = { type = type, x = wx, y = wy, direction = d, size = size, link = true }
 							if real(type, size, d, wx, wy) and (detect.propose("a", f, e) or detect.propose("b", f, e)) then
 								n = n + 1
-								if not tile_core.inside(b, wx, wy) then
+								local kept = type == "electric-pole" and size == 2 and tile_core.straddles(b, wx, wy)
+								if not (tile_core.inside(b, wx, wy) or kept) then
 									bad[#bad + 1] = ("%s %s at %s,%s"):format(side, type, wx, wy)
 								end
 							end
