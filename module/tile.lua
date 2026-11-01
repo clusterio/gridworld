@@ -319,15 +319,24 @@ runtime.scheduler.iterate{
 	end,
 }
 
+--- A 2×2 pole, or its ghost, across the tile's east or south line: UE's power link takes it there, and it is its own
+--- mirror, so one blueprint pastes on both tiles (owner, 2026-11-01).
+--- ponytail: kept on any east or south line, linked or not; check for a live UE side there if strays become a problem.
+local function link_pole(e, t, p)
+	local proto = core.straddles(t, p.x, p.y) and (e.type == "entity-ghost" and e.ghost_prototype or e.prototype)
+	return proto and proto.type == "electric-pole" and proto.tile_width == 2 and proto.tile_height == 2 or false
+end
+
 --- Whether a player's or robot's build is gridworld's to remove (§9.4): its centre outside its surface's tile (v1's
---- rule, D28), and not UE's. A surface with no record has no tile, so nothing there is (W16).
+--- rule, D28), and not UE's or a link's pole across the line. A surface with no record has no tile, so nothing there is
+--- (W16).
 local function outside(e)
 	local t = e.valid and storage.gridworld.tiles[e.surface.name]
 	if not t then
 		return false
 	end
 	local p = e.position
-	return not core.inside(t, p.x, p.y) and not ue.owns(e)
+	return not core.inside(t, p.x, p.y) and not ue.owns(e) and not link_pole(e, t, p)
 end
 
 --- §9.4: a build outside is destroyed, ghosts included, with no refund (D28). Removing a ghost as it is placed is what

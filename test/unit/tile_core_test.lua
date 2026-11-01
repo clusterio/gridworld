@@ -24,6 +24,16 @@ t.test("a centre is inside on the west and north lines, outside on the east and 
 	t.expect_true(core.inside(east, 32, 10), "the east line of (0,0) belongs to (1,0)")
 end)
 
+t.test("straddles: a 2×2 centred on the east or south line, wholly along that side; not at a corner or the west line", function()
+	local b = tile(0, 0, 64)
+	t.expect_true(core.straddles(b, 32, 0) and core.straddles(b, 0, 32), "on the east line, on the south line")
+	t.expect_true(core.straddles(b, 32, -31) and core.straddles(b, 32, 31), "the east line's first and last fit")
+	t.expect_true(core.straddles(b, -31, 32) and core.straddles(b, 31, 32), "the south line's first and last fit")
+	t.expect_true(not core.straddles(b, 32, 32) and not core.straddles(b, 32, -32), "the south-east and north-east corners")
+	t.expect_true(not core.straddles(b, -32, 0) and not core.straddles(b, 0, -32), "the west and north lines: inside already")
+	t.expect_true(not core.straddles(b, 33, 0) and not core.straddles(b, 31, 0), "off the line")
+end)
+
 t.test("chunks lie wholly inside or outside, for T = 64, 512, 1024 and 4096", function()
 	for _, T in ipairs({ 64, 512, 1024, 4096 }) do
 		for _, tx in ipairs({ 0, -1, 3 }) do
