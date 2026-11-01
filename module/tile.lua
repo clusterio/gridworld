@@ -324,7 +324,7 @@ runtime.scheduler.iterate{
 --- ponytail: kept on any east or south line, linked or not; check for a live UE side there if strays become a problem.
 local function link_pole(e, t, p)
 	local proto = core.straddles(t, p.x, p.y) and (e.type == "entity-ghost" and e.ghost_prototype or e.prototype)
-	return proto and proto.type == "electric-pole" and proto.tile_width == 2 or false
+	return proto and proto.type == "electric-pole" and proto.tile_width == 2 and proto.tile_height == 2 or false
 end
 
 --- Whether a player's or robot's build is gridworld's to remove (§9.4): its centre outside its surface's tile (v1's
