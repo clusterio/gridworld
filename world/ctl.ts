@@ -9,8 +9,18 @@ type CreateArgs = {
 	tileSize?: number; ticksPerDay?: number; mapExchangeString?: string; exclude?: string[]; seed?: number;
 };
 
-function out(text: string) {
-	process.stdout.write(`${text}\n`);
+/**
+ * Print a line of the command's result. Through clusterioctl's output (2.1, clusterio/clusterio#1230), so ctl doesn't
+ * add "Command ran successfully" after it; a plain write on a ctl without one.
+ */
+function out(control: lib.Link, text: string) {
+	const write = () => process.stdout.write(`${text}\n`);
+	const output = (control as lib.Link & { output?: { result(data: unknown, human: () => void): void } }).output;
+	if (output) {
+		output.result(text, write);
+	} else {
+		write();
+	}
 }
 
 function line(t: TileStatus): string {
@@ -45,7 +55,7 @@ worldCommands.add(new lib.Command({
 			args.tileSize, args.mapExchangeString, args.ticksPerDay, args.exclude, args.seed,
 		);
 		const { layout } = await control.send(request);
-		out(layout.world?.id ?? "");
+		out(control, layout.world?.id ?? "");
 	},
 }));
 worldCommands.add(new lib.Command({
@@ -55,18 +65,18 @@ worldCommands.add(new lib.Command({
 	handler: async (args: { json: boolean }, control: lib.Link) => {
 		const shown = await control.send(new WorldGetRequest());
 		if (args.json) {
-			out(JSON.stringify(shown));
+			out(control, JSON.stringify(shown));
 			return;
 		}
 		const world = shown.layout?.world;
 		if (!world) {
-			out("no world");
+			out(control, "no world");
 			return;
 		}
 		const deleting = world.deleting ? " (deleting)" : "";
-		out(`world ${world.id}${deleting}, tile size ${world.tileSize}, surface ${world.surface}`);
+		out(control, `world ${world.id}${deleting}, tile size ${world.tileSize}, surface ${world.surface}`);
 		for (const t of shown.tiles) {
-			out(line(t));
+			out(control, line(t));
 		}
 	},
 }));
